@@ -322,7 +322,7 @@ auto_update_script() {
     TMP_SCRIPT=$(mktemp)
     
     # 下载最新版本
-    if curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/snell.sh -o "$TMP_SCRIPT"; then
+    if curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell.sh -o "$TMP_SCRIPT"; then
         # 获取新版本号
         new_version=$(grep "current_version=" "$TMP_SCRIPT" | cut -d'"' -f2)
         
@@ -783,7 +783,7 @@ fi
 # 下载并执行最新版本的脚本
 echo -e "${CYAN}正在获取最新版本的管理脚本...${RESET}"
 TMP_SCRIPT=$(mktemp)
-if curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/snell.sh -o "$TMP_SCRIPT"; then
+if curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell.sh -o "$TMP_SCRIPT"; then
     bash "$TMP_SCRIPT"
     rm -f "$TMP_SCRIPT"
 else
@@ -1311,7 +1311,7 @@ check_snell_update() {
 
 # 获取最新 GitHub 版本
 get_latest_github_version() {
-    local api_url="https://api.github.com/repos/jinqians/snell.sh/releases/latest"
+    local api_url="https://api.github.com/repos/by44vfg7pv-rgb/snell.sh/releases/latest"
     local response
     
     response=$(curl -s "$api_url")
@@ -1335,7 +1335,7 @@ update_script() {
     TMP_SCRIPT=$(mktemp)
     
     # 下载最新版本
-    if curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/snell.sh -o "$TMP_SCRIPT"; then
+    if curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell.sh -o "$TMP_SCRIPT"; then
         # 获取新版本号
         new_version=$(grep "current_version=" "$TMP_SCRIPT" | cut -d'"' -f2)
         
@@ -1453,7 +1453,7 @@ initial_check
 # 多用户管理
 setup_multi_user() {
     echo -e "${CYAN}正在执行多用户管理脚本...${RESET}"
-    bash <(curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/multi-user.sh)
+    bash <(curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/multi-user.sh)
     
     # 多用户管理脚本执行完毕后会自动返回这里
     echo -e "${GREEN}多用户管理操作完成${RESET}"
@@ -1500,7 +1500,7 @@ setup_bbr() {
     echo -e "${CYAN}正在获取并执行 BBR 管理脚本...${RESET}"
     
     # 直接从远程执行BBR脚本
-    bash <(curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/bbr.sh)
+    bash <(curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/bbr.sh)
     
     # BBR 脚本执行完毕后会自动返回这里
     echo -e "${GREEN}BBR 管理操作完成${RESET}"
@@ -1510,7 +1510,7 @@ setup_bbr() {
 # ShadowTLS管理
 setup_shadowtls() {
     echo -e "${CYAN}正在执行 ShadowTLS 管理脚本...${RESET}"
-    bash <(curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/shadowtls.sh)
+    bash <(curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/shadowtls.sh)
     
     # ShadowTLS 脚本执行完毕后会自动返回这里
     echo -e "${GREEN}ShadowTLS 管理操作完成${RESET}"

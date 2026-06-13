@@ -283,17 +283,17 @@ update_script() {
 
 # 安装/管理 Snell
 manage_snell() {
-    bash <(curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/snell.sh)
+    bash <(curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell.sh)
 }
 
 # 安装/管理 SS-2022
 manage_ss_rust() {
-    bash <(curl -sL https://raw.githubusercontent.com/jinqians/ss-2022.sh/main/ss-2022.sh)
+    bash <(curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/vendor/ss-2022/ss-2022.sh)
 }
 
 # 安装/管理 ShadowTLS
 manage_shadowtls() {
-    bash <(curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/shadowtls.sh)
+    bash <(curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/shadowtls.sh)
 }
 
 # 安装/管理 VLESS Reality
@@ -449,7 +449,7 @@ while true; do
             update_script
             ;;
         9)
-            bash <(curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/main/traffic.sh)
+            bash <(curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/traffic.sh)
             read -p "按任意键继续..."
             ;;
         0)

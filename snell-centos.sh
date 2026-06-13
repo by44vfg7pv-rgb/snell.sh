@@ -466,7 +466,7 @@ fi
 # 下载并执行最新版本的脚本
 echo -e "${CYAN}正在获取最新版本的管理脚本...${RESET}"
 TMP_SCRIPT=$(mktemp)
-if curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/refs/heads/main/snell-centos.sh -o "$TMP_SCRIPT"; then
+if curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/refs/heads/main/snell-centos.sh -o "$TMP_SCRIPT"; then
     bash "$TMP_SCRIPT"
     rm -f "$TMP_SCRIPT"
 else
@@ -938,7 +938,7 @@ update_script() {
     TMP_SCRIPT=$(mktemp)
     
     # 下载最新版本
-    if curl -sL https://raw.githubusercontent.com/jinqians/snell.sh/refs/heads/main/snell-centos.sh -o "$TMP_SCRIPT"; then
+    if curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/refs/heads/main/snell-centos.sh -o "$TMP_SCRIPT"; then
         # 获取新版本号
         new_version=$(grep "current_version=" "$TMP_SCRIPT" | cut -d'"' -f2)
         

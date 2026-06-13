@@ -29,21 +29,21 @@ ShadowTLS 是一个轻量级的 TLS 伪装工具，能够有效规避 TLS 指纹
 脚本自行判断系统，选择对应安装脚本
 ### snell 安装
 ```bash
-sh -c "$(curl -fsSL https://install.jinqians.com)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/install.sh)"
 ```
 ### 多功能管理菜单使用(仅支持debian/ubuntu)
 ```bash
-bash <(curl -L -s menu.jinqians.com)
+bash <(curl -L -s https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/menu.sh)
 ```
 
 ## 可自行根据系统选择
 ### Debian/Ubuntu安装
 ```bash
-bash <(curl -L -s snell.jinqians.com)
+bash <(curl -L -s https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell.sh)
 ```
 ### CentOS安装
 ```bash
-bash <(curl -L -s snell-centos.jinqians.com)
+bash <(curl -L -s https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell-centos.sh)
 ```
 ### Alpine (推荐Docker 安装)
 #### Docker
@@ -75,11 +75,11 @@ services:
 ```
 #### Alpine 安装(本地构建Docker容器)
 ```bash
-sh -c "$(curl -fsSL https://snell-docker.jinqians.com)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell-docker.sh)"
 ```
 #### Alpine 3.18安装
 ```bash
-sh -c "$(curl -fsSL https://snell-alpine.jinqians.com)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell-alpine.sh)"
 ```
 
 </details>
@@ -95,7 +95,7 @@ sh -c "$(curl -fsSL https://snell-alpine.jinqians.com)"
    <summary>surge配置文件[点击展开]</summary>
    
 ## Surge配置文件
-自用配置文件：https://raw.githubusercontent.com/jinqians/snell.sh/refs/heads/main/surge.conf
+自用配置文件：https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/surge.conf
 ### 配置文件说明
 - Snell V4 配置示例
 - Snell V5 配置示例

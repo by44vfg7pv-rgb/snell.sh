@@ -179,7 +179,7 @@ open_port() {
 # 创建snell脚本
 create_management_script() {
     echo -e "${CYAN}正在创建 'snell' 管理命令...${RESET}"
-    local SCRIPT_URL="https://raw.githubusercontent.com/jinqians/snell.sh/main/snell-alpine.sh"
+    local SCRIPT_URL="https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/snell-alpine.sh"
     
     cat > /usr/local/bin/snell << EOF
 #!/bin/sh
