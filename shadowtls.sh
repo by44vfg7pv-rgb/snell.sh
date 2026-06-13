@@ -1123,6 +1123,211 @@ add_shadowtls_config() {
 }
 
 # 重启 ShadowTLS 服务
+# 开放端口 (ufw 和 iptables)
+open_port() {
+    local PORT=$1
+    if command -v ufw &> /dev/null; then
+        echo -e "${CYAN}在 UFW 中开放端口 $PORT${RESET}"
+        ufw allow "$PORT"/tcp 2>/dev/null
+    fi
+    if command -v iptables &> /dev/null; then
+        echo -e "${CYAN}在 iptables 中开放端口 $PORT${RESET}"
+        iptables -I INPUT -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null
+        [ -d "/etc/iptables" ] || mkdir -p /etc/iptables
+        iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+    fi
+}
+
+# 关闭端口 (ufw 和 iptables)
+close_port() {
+    local PORT=$1
+    if command -v ufw &> /dev/null; then
+        echo -e "${CYAN}在 UFW 中关闭端口 $PORT${RESET}"
+        ufw delete allow "$PORT"/tcp 2>/dev/null
+    fi
+    if command -v iptables &> /dev/null; then
+        echo -e "${CYAN}在 iptables 中删除端口 $PORT 规则${RESET}"
+        iptables -D INPUT -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null
+        [ -d "/etc/iptables" ] && iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+    fi
+}
+
+# 从服务文件的 ExecStart 中解析字段 (listen/server/tls/password)
+parse_stls_field() {
+    local service_file=$1
+    local field=$2
+    local execline=$(grep -E '^ExecStart=' "$service_file")
+    case "$field" in
+        listen)   echo "$execline" | sed -n 's/.*--listen ::0:\([0-9]*\).*/\1/p' ;;
+        server)   echo "$execline" | sed -n 's#.*--server 127.0.0.1:\([0-9]*\).*#\1#p' ;;
+        tls)      echo "$execline" | sed -n 's/.*--tls \([^ ]*\).*/\1/p' ;;
+        password) echo "$execline" | sed -n 's/.*--password \([^ ]*\).*/\1/p' ;;
+    esac
+}
+
+# 修改 ShadowTLS 配置 (监听端口 / 伪装域名 / 密码 / 后端端口)
+modify_shadowtls_config() {
+    echo -e "\n${YELLOW}=== 修改 ShadowTLS 配置 ===${RESET}"
+
+    # 枚举所有 ShadowTLS 服务
+    local services=()
+    local labels=()
+    if [ -f "${SYSTEMD_DIR}/shadowtls-ss.service" ]; then
+        services+=("${SYSTEMD_DIR}/shadowtls-ss.service")
+        labels+=("Shadowsocks (shadowtls-ss)")
+    fi
+    local snell_services=$(find "${SYSTEMD_DIR}" -name "shadowtls-snell-*.service" 2>/dev/null | sort)
+    if [ -n "$snell_services" ]; then
+        while IFS= read -r sf; do
+            [ -z "$sf" ] && continue
+            local bport=$(basename "$sf" | sed 's/shadowtls-snell-\([0-9]*\)\.service/\1/')
+            services+=("$sf")
+            labels+=("Snell 后端端口 ${bport} (shadowtls-snell-${bport})")
+        done <<< "$snell_services"
+    fi
+
+    if [ ${#services[@]} -eq 0 ]; then
+        echo -e "${RED}未找到任何 ShadowTLS 服务，请先安装或新增配置${RESET}"
+        return 1
+    fi
+
+    # 选择要修改的服务
+    echo -e "${YELLOW}当前 ShadowTLS 服务列表：${RESET}"
+    local i
+    for i in "${!services[@]}"; do
+        echo -e "${GREEN}$((i+1)).${RESET} ${labels[$i]}"
+    done
+    local sel
+    read -rp "请选择要修改的服务 [1-${#services[@]}]: " sel
+    if ! [[ "$sel" =~ ^[0-9]+$ ]] || [ "$sel" -lt 1 ] || [ "$sel" -gt ${#services[@]} ]; then
+        echo -e "${RED}无效的选择${RESET}"
+        return 1
+    fi
+    local service_file="${services[$((sel-1))]}"
+    local svc_name=$(basename "$service_file" .service)
+
+    # 判断服务类型
+    local stype="snell"
+    [ "$svc_name" = "shadowtls-ss" ] && stype="ss"
+
+    # 解析当前配置
+    local cur_listen=$(parse_stls_field "$service_file" listen)
+    local cur_backend=$(parse_stls_field "$service_file" server)
+    local cur_tls=$(parse_stls_field "$service_file" tls)
+    local cur_pass=$(parse_stls_field "$service_file" password)
+
+    echo -e "\n${CYAN}当前配置:${RESET}"
+    echo -e "  监听端口  : ${cur_listen}"
+    echo -e "  后端端口  : ${cur_backend}"
+    echo -e "  伪装域名  : ${cur_tls}"
+    echo -e "  密码      : ${cur_pass}"
+
+    echo -e "\n${YELLOW}请选择要修改的项目：${RESET}"
+    echo -e "${GREEN}1.${RESET} 修改监听端口"
+    echo -e "${GREEN}2.${RESET} 修改伪装域名 (SNI)"
+    echo -e "${GREEN}3.${RESET} 修改密码"
+    echo -e "${GREEN}4.${RESET} 修改后端端口"
+    echo -e "${GREEN}0.${RESET} 返回"
+    read -rp "请输入选项 [0-4]: " mc
+
+    # 目标值默认保持不变
+    local new_listen="$cur_listen"
+    local new_backend="$cur_backend"
+    local new_tls="$cur_tls"
+    local new_pass="$cur_pass"
+
+    case "$mc" in
+        1)
+            while true; do
+                read -rp "请输入新的监听端口 (1-65535，直接回车随机生成): " in_port
+                local resolved
+                resolved=$(get_available_port "$in_port")
+                if [ $? -eq 0 ]; then
+                    new_listen="$resolved"
+                    break
+                fi
+                echo -e "${YELLOW}端口不可用，请重新输入${RESET}"
+            done
+            ;;
+        2)
+            read -rp "请输入新的伪装域名 (SNI): " in_tls
+            if [ -z "$in_tls" ]; then
+                echo -e "${RED}域名不能为空，已取消${RESET}"
+                return 1
+            fi
+            new_tls="$in_tls"
+            ;;
+        3)
+            read -rp "请输入新密码 (直接回车随机生成): " in_pass
+            if [ -z "$in_pass" ]; then
+                in_pass=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
+                echo -e "${GREEN}已生成随机密码: ${in_pass}${RESET}"
+            fi
+            new_pass="$in_pass"
+            ;;
+        4)
+            read -rp "请输入新的后端端口 (1-65535): " in_back
+            if ! [[ "$in_back" =~ ^[0-9]+$ ]] || [ "$in_back" -lt 1 ] || [ "$in_back" -gt 65535 ]; then
+                echo -e "${RED}无效端口号${RESET}"
+                return 1
+            fi
+            new_backend="$in_back"
+            ;;
+        0)
+            return 0
+            ;;
+        *)
+            echo -e "${RED}无效选项${RESET}"
+            return 1
+            ;;
+    esac
+
+    # 计算新服务名
+    local new_svc
+    if [ "$stype" = "ss" ]; then
+        new_svc="shadowtls-ss"
+    else
+        new_svc="shadowtls-snell-${new_backend}"
+    fi
+
+    # 停止旧服务
+    systemctl stop "$svc_name" 2>/dev/null
+    systemctl disable "$svc_name" 2>/dev/null
+
+    # snell 服务文件名按后端端口命名，后端端口变化时需删除旧文件
+    if [ "$stype" = "snell" ] && [ "$new_backend" != "$cur_backend" ]; then
+        rm -f "${SYSTEMD_DIR}/${svc_name}.service"
+    fi
+
+    # 重写服务文件
+    create_shadowtls_service "$stype" "$new_backend" "$new_listen" "$new_tls" "$new_pass"
+
+    # 重载并启动
+    systemctl daemon-reload
+    systemctl enable "$new_svc" 2>/dev/null
+    systemctl start "$new_svc"
+    sleep 1
+    if ! systemctl is-active --quiet "$new_svc"; then
+        echo -e "${RED}服务 ${new_svc} 启动失败，请检查: journalctl -u ${new_svc} -n 30 --no-pager${RESET}"
+        return 1
+    fi
+
+    # 监听端口变化时更新防火墙
+    if [ "$new_listen" != "$cur_listen" ]; then
+        open_port "$new_listen"
+        close_port "$cur_listen"
+    fi
+
+    echo -e "${GREEN}ShadowTLS 配置修改成功${RESET}"
+    echo -e "${CYAN}--------------------------------${RESET}"
+    echo -e "  监听端口  : ${new_listen}"
+    echo -e "  后端端口  : ${new_backend}"
+    echo -e "  伪装域名  : ${new_tls}"
+    echo -e "  密码      : ${new_pass}"
+    echo -e "${CYAN}--------------------------------${RESET}"
+    echo -e "${YELLOW}提示: 客户端的 shadow-tls 端口/域名/密码需同步更新。${RESET}"
+}
+
 restart_shadowtls_services() {
     echo -e "${CYAN}重启 ShadowTLS 服务...${RESET}"
     
@@ -1188,12 +1393,13 @@ main_menu() {
         echo -e "${YELLOW}2. 卸载 ShadowTLS${RESET}"
         echo -e "${YELLOW}3. 查看配置${RESET}"
         echo -e "${YELLOW}4. 新增配置${RESET}"
-        echo -e "${YELLOW}5. 重启服务${RESET}"
-        echo -e "${YELLOW}6. 返回上级菜单${RESET}"
+        echo -e "${YELLOW}5. 修改配置${RESET}"
+        echo -e "${YELLOW}6. 重启服务${RESET}"
+        echo -e "${YELLOW}7. 返回上级菜单${RESET}"
         echo -e "${YELLOW}0. 退出${RESET}"
-        
-        read -rp "请选择操作 [0-6]: " choice
-        
+
+        read -rp "请选择操作 [0-7]: " choice
+
         case "$choice" in
             1)
                 install_shadowtls
@@ -1208,9 +1414,12 @@ main_menu() {
                 add_shadowtls_config
                 ;;
             5)
-                restart_shadowtls_services
+                modify_shadowtls_config
                 ;;
             6)
+                restart_shadowtls_services
+                ;;
+            7)
                 return 0
                 ;;
             0)

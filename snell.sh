@@ -512,6 +512,123 @@ open_port() {
     fi
 }
 
+# 关闭端口 (ufw 和 iptables)
+close_port() {
+    local PORT=$1
+    if command -v ufw &> /dev/null; then
+        echo -e "${CYAN}在 UFW 中关闭端口 $PORT${RESET}"
+        ufw delete allow "$PORT"/tcp 2>/dev/null
+    fi
+    if command -v iptables &> /dev/null; then
+        echo -e "${CYAN}在 iptables 中删除端口 $PORT 规则${RESET}"
+        iptables -D INPUT -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null
+        if [ -d "/etc/iptables" ]; then
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+        fi
+    fi
+}
+
+# 修改主用户配置 (端口 / PSK / DNS)
+modify_snell_config() {
+    echo -e "\n${YELLOW}=== 修改配置 (主用户) ===${RESET}"
+
+    if ! check_snell_installed; then
+        echo -e "${RED}未检测到 Snell 安装，请先安装。${RESET}"
+        return 1
+    fi
+
+    if [ ! -f "${SNELL_CONF_FILE}" ]; then
+        echo -e "${RED}未找到主用户配置文件: ${SNELL_CONF_FILE}${RESET}"
+        return 1
+    fi
+
+    local cur_port=$(grep -E '^listen' "${SNELL_CONF_FILE}" | sed -n 's/.*::0:\([0-9]*\)/\1/p')
+    local cur_psk=$(grep -E '^psk' "${SNELL_CONF_FILE}" | awk -F'=' '{print $2}' | tr -d ' ')
+    local cur_dns=$(grep -E '^dns' "${SNELL_CONF_FILE}" | awk -F'=' '{print $2}' | tr -d ' ')
+
+    echo -e "${CYAN}当前配置:${RESET}"
+    echo -e "  端口: ${cur_port}"
+    echo -e "  PSK : ${cur_psk}"
+    echo -e "  DNS : ${cur_dns:-(未设置)}"
+
+    echo -e "\n${YELLOW}请选择要修改的项目：${RESET}"
+    echo -e "${GREEN}1.${RESET} 修改端口"
+    echo -e "${GREEN}2.${RESET} 重置 PSK"
+    echo -e "${GREEN}3.${RESET} 修改 DNS"
+    echo -e "${GREEN}0.${RESET} 返回"
+    read -rp "请输入选项 [0-3]: " mod_choice
+
+    case "$mod_choice" in
+        1)
+            local new_port
+            while true; do
+                read -rp "请输入新端口号 (1-65535): " new_port
+                if [[ "$new_port" =~ ^[0-9]+$ ]] && [ "$new_port" -ge 1 ] && [ "$new_port" -le 65535 ]; then
+                    if [ "$new_port" = "$cur_port" ]; then
+                        echo -e "${YELLOW}新端口与当前端口相同，无需修改${RESET}"
+                        return 0
+                    fi
+                    # 系统层端口占用检测
+                    if command -v ss &> /dev/null && ss -tuln 2>/dev/null | grep -qE ":${new_port}([[:space:]]|$)"; then
+                        echo -e "${RED}端口 ${new_port} 已被占用，请选择其他端口${RESET}"
+                        continue
+                    fi
+                    break
+                else
+                    echo -e "${RED}无效端口号，请输入 1 到 65535 之间的数字${RESET}"
+                fi
+            done
+
+            backup_snell_config > /dev/null
+            systemctl stop snell
+            sed -i "s/listen = ::0:${cur_port}/listen = ::0:${new_port}/" "${SNELL_CONF_FILE}"
+            systemctl daemon-reload
+            systemctl restart snell
+            sleep 1
+            if ! systemctl is-active --quiet snell; then
+                echo -e "${RED}服务启动失败，正在回滚端口...${RESET}"
+                sed -i "s/listen = ::0:${new_port}/listen = ::0:${cur_port}/" "${SNELL_CONF_FILE}"
+                systemctl restart snell
+                echo -e "${YELLOW}请检查原因: journalctl -u snell -n 30 --no-pager${RESET}"
+                return 1
+            fi
+            open_port "$new_port"
+            close_port "$cur_port"
+            # ShadowTLS 联动提示
+            if [ -f "/etc/systemd/system/shadowtls-snell-${cur_port}.service" ]; then
+                echo -e "${YELLOW}注意: 端口 ${cur_port} 关联的 ShadowTLS 服务 (shadowtls-snell-${cur_port}) 仍指向旧端口，${RESET}"
+                echo -e "${YELLOW}      请进入「ShadowTLS 管理」重新配置或删除该服务。${RESET}"
+            fi
+            echo -e "${GREEN}端口修改成功 (${cur_port} -> ${new_port})${RESET}"
+            ;;
+        2)
+            local new_psk=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 20)
+            backup_snell_config > /dev/null
+            sed -i "s/psk = .*/psk = ${new_psk}/" "${SNELL_CONF_FILE}"
+            systemctl restart snell
+            echo -e "${GREEN}PSK 已重置为: ${new_psk}${RESET}"
+            echo -e "${YELLOW}注意: 客户端配置需同步更新此 PSK。${RESET}"
+            ;;
+        3)
+            get_dns
+            backup_snell_config > /dev/null
+            if grep -qE '^dns' "${SNELL_CONF_FILE}"; then
+                sed -i "s/dns = .*/dns = ${DNS}/" "${SNELL_CONF_FILE}"
+            else
+                echo "dns = ${DNS}" >> "${SNELL_CONF_FILE}"
+            fi
+            systemctl restart snell
+            echo -e "${GREEN}DNS 修改成功: ${DNS}${RESET}"
+            ;;
+        0)
+            return 0
+            ;;
+        *)
+            echo -e "${RED}无效选项${RESET}"
+            ;;
+    esac
+}
+
 # 安装 Snell
 install_snell() {
     echo -e "${CYAN}正在安装 Snell${RESET}"
@@ -1360,21 +1477,22 @@ show_menu() {
     echo -e "${GREEN}1.${RESET} 安装 Snell"
     echo -e "${GREEN}2.${RESET} 卸载 Snell"
     echo -e "${GREEN}3.${RESET} 查看配置"
-    echo -e "${GREEN}4.${RESET} 重启服务"
-    
+    echo -e "${GREEN}4.${RESET} 修改配置"
+    echo -e "${GREEN}5.${RESET} 重启服务"
+
     echo -e "\n${YELLOW}=== 增强功能 ===${RESET}"
-    echo -e "${GREEN}5.${RESET} ShadowTLS 管理"
-    echo -e "${GREEN}6.${RESET} BBR 管理"
-    echo -e "${GREEN}7.${RESET} 多用户管理"
-    
+    echo -e "${GREEN}6.${RESET} ShadowTLS 管理"
+    echo -e "${GREEN}7.${RESET} BBR 管理"
+    echo -e "${GREEN}8.${RESET} 多用户管理"
+
     echo -e "\n${YELLOW}=== 系统功能 ===${RESET}"
-    echo -e "${GREEN}8.${RESET} 更新Snell"
-    echo -e "${GREEN}9.${RESET} 更新脚本"
-    echo -e "${GREEN}10.${RESET} 查看服务状态"
+    echo -e "${GREEN}9.${RESET} 更新Snell"
+    echo -e "${GREEN}10.${RESET} 更新脚本"
+    echo -e "${GREEN}11.${RESET} 查看服务状态"
     echo -e "${GREEN}0.${RESET} 退出脚本"
-    
+
     echo -e "${CYAN}============================================${RESET}"
-    read -rp "请输入选项 [0-10]: " num
+    read -rp "请输入选项 [0-11]: " num
 }
 
 #开启bbr
@@ -1450,24 +1568,27 @@ while true; do
             view_snell_config
             ;;
         4)
-            restart_snell
+            modify_snell_config
             ;;
         5)
-            setup_shadowtls
+            restart_snell
             ;;
         6)
-            setup_bbr
+            setup_shadowtls
             ;;
         7)
-            setup_multi_user
+            setup_bbr
             ;;
         8)
-            check_snell_update
+            setup_multi_user
             ;;
         9)
-            update_script
+            check_snell_update
             ;;
         10)
+            update_script
+            ;;
+        11)
             check_and_show_status
             read -p "按任意键继续..."
             ;;
@@ -1476,7 +1597,7 @@ while true; do
             exit 0
             ;;
         *)
-            echo -e "${RED}请输入正确的选项 [0-10]${RESET}"
+            echo -e "${RED}请输入正确的选项 [0-11]${RESET}"
             ;;
     esac
     echo -e "\n${CYAN}按任意键返回主菜单...${RESET}"

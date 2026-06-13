@@ -402,6 +402,116 @@ show_information() {
     echo -e "${BLUE}============================================${RESET}"
 }
 
+# 关闭端口 (iptables)
+close_port() {
+    local port=$1
+    echo -e "${CYAN}正在更新防火墙 (iptables)...${RESET}"
+    iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
+    /etc/init.d/iptables save > /dev/null 2>&1
+    echo -e "${GREEN}已移除端口 ${port} 的放行规则${RESET}"
+}
+
+# 修改主用户配置 (端口 / PSK / DNS)
+modify_snell_config() {
+    check_root
+    echo -e "\n${YELLOW}=== 修改配置 (主用户) ===${RESET}"
+
+    if [ ! -f "$OPENRC_SERVICE_FILE" ]; then
+        echo -e "${RED}未检测到 Snell 安装，请先安装。${RESET}"
+        return 1
+    fi
+    if [ ! -f "${SNELL_CONF_FILE}" ]; then
+        echo -e "${RED}未找到主用户配置文件: ${SNELL_CONF_FILE}${RESET}"
+        return 1
+    fi
+
+    local cur_port
+    local cur_psk
+    local cur_dns
+    cur_port=$(grep -E '^listen' "${SNELL_CONF_FILE}" | sed -n 's/.*0\.0\.0\.0:\([0-9]*\)/\1/p')
+    cur_psk=$(grep -E '^psk' "${SNELL_CONF_FILE}" | awk -F'=' '{print $2}' | tr -d ' ')
+    cur_dns=$(grep -E '^dns' "${SNELL_CONF_FILE}" | awk -F'=' '{print $2}' | tr -d ' ')
+
+    echo -e "${CYAN}当前配置:${RESET}"
+    echo -e "  端口: ${cur_port}"
+    echo -e "  PSK : ${cur_psk}"
+    echo -e "  DNS : ${cur_dns:-(未设置)}"
+
+    # 修改前备份配置
+    mkdir -p "${SNELL_CONF_DIR}/backup" 2>/dev/null
+    cp -a "${SNELL_CONF_FILE}" "${SNELL_CONF_DIR}/backup/snell-main.conf.$(date +%Y%m%d_%H%M%S)" 2>/dev/null
+
+    echo -e "\n${YELLOW}请选择要修改的项目：${RESET}"
+    echo -e "${GREEN}1.${RESET} 修改端口"
+    echo -e "${GREEN}2.${RESET} 重置 PSK"
+    echo -e "${GREEN}3.${RESET} 修改 DNS"
+    echo -e "${GREEN}0.${RESET} 返回"
+    printf "请输入选项 [0-3]: "
+    read -r mod_choice
+
+    case "$mod_choice" in
+        1)
+            local new_port
+            while true; do
+                printf "请输入新端口号 (1-65535): "
+                read -r new_port
+                case "$new_port" in ''|*[!0-9]*) echo -e "${RED}无效输入，请输入纯数字${RESET}"; continue;; esac
+                if [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+                    echo -e "${RED}无效端口号，请输入 1 到 65535 之间的数字${RESET}"; continue
+                fi
+                if [ "$new_port" = "$cur_port" ]; then
+                    echo -e "${YELLOW}新端口与当前端口相同，无需修改${RESET}"; return 0
+                fi
+                if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":${new_port}([[:space:]]|$)"; then
+                    echo -e "${RED}端口 ${new_port} 已被占用，请选择其他端口${RESET}"; continue
+                fi
+                break
+            done
+
+            rc-service snell stop > /dev/null 2>&1
+            sed -i "s|listen = 0.0.0.0:${cur_port}|listen = 0.0.0.0:${new_port}|" "${SNELL_CONF_FILE}"
+            rc-service snell start > /dev/null 2>&1
+            sleep 2
+            if ! rc-service snell status 2>/dev/null | grep -q "started"; then
+                echo -e "${RED}服务启动失败，正在回滚端口...${RESET}"
+                sed -i "s|listen = 0.0.0.0:${new_port}|listen = 0.0.0.0:${cur_port}|" "${SNELL_CONF_FILE}"
+                rc-service snell start > /dev/null 2>&1
+                return 1
+            fi
+            open_port "$new_port"
+            close_port "$cur_port"
+            echo -e "${GREEN}端口修改成功 (${cur_port} -> ${new_port})${RESET}"
+            ;;
+        2)
+            local new_psk
+            new_psk=$(openssl rand -base64 16)
+            sed -i "s|psk = .*|psk = ${new_psk}|" "${SNELL_CONF_FILE}"
+            rc-service snell restart > /dev/null 2>&1
+            echo -e "${GREEN}PSK 已重置为: ${new_psk}${RESET}"
+            echo -e "${YELLOW}注意: 客户端配置需同步更新此 PSK。${RESET}"
+            ;;
+        3)
+            local new_dns
+            printf "请输入 DNS 服务器地址 (直接回车使用 1.1.1.1,8.8.8.8): "
+            read -r new_dns
+            [ -z "$new_dns" ] && new_dns="1.1.1.1,8.8.8.8"
+            if grep -qE '^dns' "${SNELL_CONF_FILE}"; then
+                sed -i "s|dns = .*|dns = ${new_dns}|" "${SNELL_CONF_FILE}"
+            else
+                echo "dns = ${new_dns}" >> "${SNELL_CONF_FILE}"
+            fi
+            rc-service snell restart > /dev/null 2>&1
+            echo -e "${GREEN}DNS 修改成功: ${new_dns}${RESET}"
+            ;;
+        0)
+            return 0
+            ;;
+        *)
+            echo -e "${RED}无效选项${RESET}"
+            ;;
+    esac
+}
+
 restart_snell() {
     check_root
     echo -e "${YELLOW}正在重启 Snell 服务...${RESET}"
@@ -431,10 +541,11 @@ show_menu() {
     echo -e "${GREEN}2.${RESET} 卸载 Snell"
     echo -e "${GREEN}3.${RESET} 重启服务"
     echo -e "${GREEN}4.${RESET} 查看配置信息"
-    echo -e "${GREEN}5.${RESET} 查看详细状态"
+    echo -e "${GREEN}5.${RESET} 修改配置"
+    echo -e "${GREEN}6.${RESET} 查看详细状态"
     echo -e "${GREEN}0.${RESET} 退出脚本"
     echo -e "${CYAN}============================================${RESET}"
-    printf "请输入选项 [0-5]: "
+    printf "请输入选项 [0-6]: "
     read -r num
 }
 
@@ -448,9 +559,10 @@ while true; do
         2) uninstall_snell ;;
         3) restart_snell ;;
         4) show_information ;;
-        5) check_status ;;
+        5) modify_snell_config ;;
+        6) check_status ;;
         0) echo -e "${GREEN}感谢使用，再见！${RESET}"; exit 0 ;;
-        *) echo -e "${RED}请输入正确的选项 [0-5]${RESET}";;
+        *) echo -e "${RED}请输入正确的选项 [0-6]${RESET}";;
     esac
     echo ""
     printf "${CYAN}按任意键返回主菜单...${RESET}"
