@@ -450,9 +450,132 @@ uninstall_snell() {
     echo -e "${GREEN}🗑️  Snell 已完全卸载${RESET}"
 }
 
+# 修改配置 (重建容器)
+modify_snell_config() {
+    check_root
+
+    echo -e "\n${YELLOW}=== 修改配置 (重建容器) ===${RESET}"
+
+    if ! docker ps -a 2>/dev/null | grep -q "${CONTAINER_NAME}"; then
+        echo -e "${RED}未检测到 Snell 容器，请先安装。${RESET}"
+        return 1
+    fi
+    if ! docker images 2>/dev/null | grep -q "${IMAGE_NAME}"; then
+        echo -e "${RED}未找到镜像 ${IMAGE_NAME}，请先安装。${RESET}"
+        return 1
+    fi
+
+    local conf="/etc/snell-docker/snell-server.conf"
+    # 持久配置缺失时尝试从容器导出
+    if [ ! -f "$conf" ]; then
+        mkdir -p /etc/snell-docker
+        docker exec "${CONTAINER_NAME}" cat /etc/snell/snell-server.conf > "$conf" 2>/dev/null
+    fi
+    if [ ! -s "$conf" ]; then
+        echo -e "${RED}无法读取容器配置文件，操作中止${RESET}"
+        return 1
+    fi
+
+    local cur_port
+    local cur_psk
+    cur_port=$(grep -E '^listen' "$conf" | sed -n 's/.*0\.0\.0\.0:\([0-9]*\)/\1/p')
+    cur_psk=$(grep -E '^psk' "$conf" | awk -F'=' '{print $2}' | tr -d ' ')
+
+    echo -e "${CYAN}当前配置:${RESET}"
+    echo -e "  端口: ${cur_port}"
+    echo -e "  PSK : ${cur_psk}"
+
+    echo -e "\n${YELLOW}请选择要修改的项目：${RESET}"
+    echo -e "${GREEN}1.${RESET} 修改端口"
+    echo -e "${GREEN}2.${RESET} 重置 PSK"
+    echo -e "${GREEN}0.${RESET} 返回"
+    printf "请输入选项 [0-2]: "
+    read -r mod_choice
+
+    local new_port="$cur_port"
+
+    case "$mod_choice" in
+        1)
+            local in_port
+            while true; do
+                printf "请输入新端口号 (1-65535): "
+                read -r in_port
+                case "$in_port" in ''|*[!0-9]*) echo -e "${RED}无效输入，请输入纯数字${RESET}"; continue;; esac
+                if [ "$in_port" -lt 1 ] || [ "$in_port" -gt 65535 ]; then
+                    echo -e "${RED}无效端口号，请输入 1 到 65535 之间的数字${RESET}"; continue
+                fi
+                if [ "$in_port" = "$cur_port" ]; then
+                    echo -e "${YELLOW}新端口与当前端口相同，无需修改${RESET}"; return 0
+                fi
+                if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":${in_port}([[:space:]]|$)"; then
+                    echo -e "${RED}端口 ${in_port} 已被占用，请选择其他端口${RESET}"; continue
+                fi
+                break
+            done
+            new_port="$in_port"
+            sed -i "s|listen = 0.0.0.0:${cur_port}|listen = 0.0.0.0:${new_port}|" "$conf"
+            ;;
+        2)
+            local new_psk
+            new_psk=$(openssl rand -base64 16)
+            sed -i "s|psk = .*|psk = ${new_psk}|" "$conf"
+            echo -e "${GREEN}新 PSK: ${new_psk}${RESET}"
+            ;;
+        0)
+            return 0
+            ;;
+        *)
+            echo -e "${RED}无效选项${RESET}"
+            return 1
+            ;;
+    esac
+
+    # 重建容器：挂载持久配置覆盖镜像内配置，无需重建镜像
+    echo -e "${CYAN}正在重建容器以应用新配置...${RESET}"
+    docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+
+    if ! docker run -d \
+        --name "${CONTAINER_NAME}" \
+        --restart unless-stopped \
+        -p "${new_port}:${new_port}" \
+        -v "${conf}:/etc/snell/snell-server.conf" \
+        "${IMAGE_NAME}:latest" >/dev/null 2>&1; then
+        echo -e "${RED}✗ 容器重建失败${RESET}"
+        return 1
+    fi
+
+    sleep 3
+    if ! docker ps 2>/dev/null | grep -q "${CONTAINER_NAME}"; then
+        echo -e "${RED}✗ 容器启动异常，请查看日志: docker logs ${CONTAINER_NAME}${RESET}"
+        return 1
+    fi
+
+    # 端口变化时更新防火墙
+    if [ "$new_port" != "$cur_port" ]; then
+        if command -v iptables >/dev/null 2>&1; then
+            iptables -I INPUT -p tcp --dport "$new_port" -j ACCEPT 2>/dev/null || true
+            iptables -D INPUT -p tcp --dport "$cur_port" -j ACCEPT 2>/dev/null || true
+            command -v iptables-save >/dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+        fi
+        if command -v ufw >/dev/null 2>&1; then
+            ufw allow "$new_port" >/dev/null 2>&1 || true
+            ufw delete allow "$cur_port" >/dev/null 2>&1 || true
+        fi
+        echo "$new_port" > /tmp/snell_port
+    fi
+
+    echo -e "${GREEN}✓ 配置修改成功，容器已重建${RESET}"
+    echo -e "${CYAN}--------------------------------${RESET}"
+    echo -e "  端口: ${new_port}"
+    echo -e "  PSK : $(grep -E '^psk' "$conf" | awk -F'=' '{print $2}' | tr -d ' ')"
+    echo -e "${CYAN}--------------------------------${RESET}"
+    echo -e "${YELLOW}注意: 客户端需同步更新；改端口后请确保 VPS 提供商防火墙也放行 ${new_port}。${RESET}"
+}
+
 restart_snell() {
     check_root
-    
+
     if ! docker ps -a | grep -q "${CONTAINER_NAME}"; then
         echo -e "${RED}错误: Snell 容器不存在${RESET}"
         return 1
@@ -1093,12 +1216,13 @@ show_menu() {
     echo -e "${GREEN}2.${RESET} 🗑️  卸载 Snell"
     echo -e "${GREEN}3.${RESET} 🔄 重启服务"
     echo -e "${GREEN}4.${RESET} 📋 查看配置信息"
-    echo -e "${GREEN}5.${RESET} 📊 查看详细状态"
-    echo -e "${GREEN}6.${RESET} � 网络连接诊断"
-    echo -e "${GREEN}7.${RESET} �🐳 Docker 常用命令"
+    echo -e "${GREEN}5.${RESET} ✏️  修改配置"
+    echo -e "${GREEN}6.${RESET} 📊 查看详细状态"
+    echo -e "${GREEN}7.${RESET} 🔍 网络连接诊断"
+    echo -e "${GREEN}8.${RESET} 🐳 Docker 常用命令"
     echo -e "${GREEN}0.${RESET} 🚪 退出脚本"
     echo -e "${CYAN}============================================${RESET}"
-    printf "请输入选项 [0-7]: "
+    printf "请输入选项 [0-8]: "
     read -r num
 }
 
@@ -1146,13 +1270,14 @@ main() {
             2) uninstall_snell ;;
             3) restart_snell ;;
             4) show_information ;;
-            5) check_status ;;
-            6) network_diagnosis ;;
-            7) show_docker_commands ;;
+            5) modify_snell_config ;;
+            6) check_status ;;
+            7) network_diagnosis ;;
+            8) show_docker_commands ;;
             0) echo -e "${GREEN}感谢使用，再见！🎉${RESET}"; exit 0 ;;
-            *) echo -e "${RED}请输入正确的选项 [0-7]${RESET}";;
+            *) echo -e "${RED}请输入正确的选项 [0-8]${RESET}";;
         esac
-        if [ "$num" != "7" ]; then
+        if [ "$num" != "8" ]; then
             echo ""
             printf "${CYAN}按任意键返回主菜单...${RESET}"
             read -r dummy
