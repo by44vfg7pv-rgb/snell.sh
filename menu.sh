@@ -299,7 +299,7 @@ manage_shadowtls() {
 # 安装/管理 VLESS Reality
 manage_vless() {
     # 从你的仓库拉取并执行 vless 管理脚本
-    bash <(curl -sL https://raw.githubusercontent.com/jinqians/vless/refs/heads/main/vless.sh)
+    bash <(curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/vless/refs/heads/main/vless.sh)
 }
 # 卸载 Snell
 uninstall_snell() {
