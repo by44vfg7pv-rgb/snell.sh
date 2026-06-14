@@ -21,7 +21,7 @@ install_global_command() {
     echo -e "${CYAN}正在安装全局命令...${RESET}"
     
     # 下载脚本到 /usr/local/bin
-    curl -L -s menu.jinqians.com -o "/usr/local/bin/menu.sh"
+    curl -L -s https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/menu.sh -o "/usr/local/bin/menu.sh"
     chmod +x "/usr/local/bin/menu.sh"
     
     # 创建软链接
@@ -235,7 +235,7 @@ update_script() {
     TMP_SCRIPT=$(mktemp)
     
     # 下载最新版本
-    if curl -sL https://raw.githubusercontent.com/jinqians/menu/main/menu.sh -o "$TMP_SCRIPT"; then
+    if curl -sL https://raw.githubusercontent.com/by44vfg7pv-rgb/snell.sh/main/menu.sh -o "$TMP_SCRIPT"; then
         # 获取新版本号
         new_version=$(grep "current_version=" "$TMP_SCRIPT" | cut -d'"' -f2)
         
